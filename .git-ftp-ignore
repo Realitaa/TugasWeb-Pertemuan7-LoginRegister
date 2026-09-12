@@ -1,0 +1,13 @@
+.git*
+.github/
+.phpunit.cache/
+tests/
+node_modules/
+*.log
+phpunit.xml
+package.json
+pnpm-lock.yaml
+composer.json
+composer.lock
+vite.config.js
+README.md
