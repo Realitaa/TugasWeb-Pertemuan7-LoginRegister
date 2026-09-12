@@ -1,8 +1,8 @@
 .git*
-.github/
-.phpunit.cache/
-tests/
-node_modules/
+.github/*
+.phpunit.cache/*
+tests/*
+node_modules/*
 *.log
 phpunit.xml
 package.json
