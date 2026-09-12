@@ -1,0 +1,10 @@
+[
+    {
+        "id": "usr_c93a25ed20acb83b",
+        "name": "Commander",
+        "email": "commander@example.com",
+        "password": "$2y$12$T0D4aCn.u9goloDyPpDybe5JhHsRGGChCM1kFcoBfkCHbW8H0nsyy",
+        "created_at": "2026-09-12T07:17:13+00:00",
+        "remember_token": null
+    }
+]
