@@ -27,3 +27,5 @@ storage/vite.hot
 *.njsproj
 *.sln
 *.sw?
+
+storage/cache

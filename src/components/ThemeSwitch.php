@@ -16,7 +16,7 @@ function renderThemeSwitch(): string
         aria-label="Light Mode"
       >
         <iconify-icon icon="lucide:sun" class="text-sm shrink-0"></iconify-icon>
-        <span class="hidden sm:inline">Light</span>
+        <span>Light</span>
       </button>
       <button 
         type="button" 
@@ -27,7 +27,7 @@ function renderThemeSwitch(): string
         aria-label="Dark Mode"
       >
         <iconify-icon icon="lucide:moon" class="text-sm shrink-0"></iconify-icon>
-        <span class="hidden sm:inline">Dark</span>
+        <span>Dark</span>
       </button>
       <button 
         type="button" 
@@ -38,7 +38,7 @@ function renderThemeSwitch(): string
         aria-label="System Preference"
       >
         <iconify-icon icon="lucide:laptop" class="text-sm shrink-0"></iconify-icon>
-        <span class="hidden sm:inline">Auto</span>
+        <span>Auto</span>
       </button>
     </div>
 HTML;
