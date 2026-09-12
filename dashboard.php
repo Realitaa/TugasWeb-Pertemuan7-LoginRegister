@@ -265,6 +265,10 @@ function parseSpaceXStatsHtml(string $html): array
                 ];
             }
         }
+        // Urutkan tahun menaik (chronological ascending: e.g. 2010 -> 2026)
+        usort($stats['launches_per_year']['by_year'], function ($a, $b) {
+            return (int)$a['year'] <=> (int)$b['year'];
+        });
     }
 
     // 3. Launch sites
@@ -503,6 +507,11 @@ require_once __DIR__ . '/src/components/ThemeSwitch.php';
 
 $forceRefresh = isset($_GET['refresh']);
 $stats = fetchSpaceXStats($forceRefresh);
+if (!empty($stats['launches_per_year']['by_year'])) {
+    usort($stats['launches_per_year']['by_year'], function ($a, $b) {
+        return (int)$a['year'] <=> (int)$b['year'];
+    });
+}
 
 $lc = $stats['launch_count'];
 $lpy = $stats['launches_per_year'];

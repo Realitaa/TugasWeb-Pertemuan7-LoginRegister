@@ -21,9 +21,12 @@ export function initLaunchesPerYearChart(canvasId, yearData) {
   const canvas = document.getElementById(canvasId);
   if (!canvas || !yearData || !yearData.length) return null;
 
-  const labels = yearData.map(item => item.year);
-  const successData = yearData.map(item => item.success);
-  const failedData = yearData.map(item => Math.max(0, item.total - item.success));
+  // Sort chronological ascending (e.g. 2010 -> 2026) so years progress forward to the right
+  const sortedYearData = [...yearData].sort((a, b) => parseInt(a.year, 10) - parseInt(b.year, 10));
+
+  const labels = sortedYearData.map(item => item.year);
+  const successData = sortedYearData.map(item => item.success);
+  const failedData = sortedYearData.map(item => Math.max(0, item.total - item.success));
 
   return new Chart(canvas, {
     type: 'bar',
@@ -72,7 +75,7 @@ export function initLaunchesPerYearChart(canvasId, yearData) {
           callbacks: {
             afterTitle: function (context) {
               const idx = context[0].dataIndex;
-              const item = yearData[idx];
+              const item = sortedYearData[idx];
               return `Total: ${item.total} launches (${item.rate} success)`;
             },
           },
