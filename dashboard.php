@@ -204,9 +204,20 @@ function parseSpaceXStatsHtml(string $html): array
 
     $stats = defaultSpaceXStats();
 
+    // Helper to find section case-insensitively
+    $findSection = function(string $name) use ($rawSections): ?array {
+        foreach ($rawSections as $key => $items) {
+            if (strcasecmp((string)$key, $name) === 0) {
+                return $items;
+            }
+        }
+        return null;
+    };
+
     // 1. Launch Count
-    if (isset($rawSections['Launch Count'])) {
-        foreach ($rawSections['Launch Count'] as $item) {
+    $secLaunchCount = $findSection('Launch Count');
+    if ($secLaunchCount !== null) {
+        foreach ($secLaunchCount as $item) {
             $name = $item['name'];
             $val = $item['value'];
             if (strcasecmp($name, 'Total') === 0) {
@@ -235,8 +246,9 @@ function parseSpaceXStatsHtml(string $html): array
     }
 
     // 2. Launches per year
-    if (isset($rawSections['Launches per year'])) {
-        foreach ($rawSections['Launches per year'] as $item) {
+    $secLaunchesPerYear = $findSection('Launches Per Year');
+    if ($secLaunchesPerYear !== null) {
+        foreach ($secLaunchesPerYear as $item) {
             $name = $item['name'];
             $val = $item['value'];
             if (stripos($name, 'Most') !== false) {
@@ -256,8 +268,9 @@ function parseSpaceXStatsHtml(string $html): array
     }
 
     // 3. Launch sites
-    if (isset($rawSections['Launch Sites'])) {
-        foreach ($rawSections['Launch Sites'] as $item) {
+    $secLaunchSites = $findSection('Launch Sites');
+    if ($secLaunchSites !== null) {
+        foreach ($secLaunchSites as $item) {
             $p = parseSpaceXRatio($item['value']);
             $stats['launch_sites'][] = [
                 'name' => $item['name'],
@@ -270,8 +283,9 @@ function parseSpaceXStatsHtml(string $html): array
     }
 
     // 4. Landing sites
-    if (isset($rawSections['Landing Sites'])) {
-        foreach ($rawSections['Landing Sites'] as $item) {
+    $secLandingSites = $findSection('Landing Sites');
+    if ($secLandingSites !== null) {
+        foreach ($secLandingSites as $item) {
             $p = parseSpaceXRatio($item['value']);
             $stats['landing_sites'][] = [
                 'name' => $item['name'],
@@ -285,8 +299,9 @@ function parseSpaceXStatsHtml(string $html): array
     }
 
     // 5. Turnarounds
-    if (isset($rawSections['Turnarounds'])) {
-        foreach ($rawSections['Turnarounds'] as $item) {
+    $secTurnarounds = $findSection('Turnarounds');
+    if ($secTurnarounds !== null) {
+        foreach ($secTurnarounds as $item) {
             $name = strtolower($item['name']);
             if (strpos($name, 'fastest booster') !== false) {
                 $stats['turnarounds']['fastest_booster'] = ['value' => $item['value'], 'details' => $item['extra'] ?? ''];
@@ -303,8 +318,9 @@ function parseSpaceXStatsHtml(string $html): array
     }
 
     // 6. Booster reuse
-    if (isset($rawSections['Booster Reuse'])) {
-        foreach ($rawSections['Booster Reuse'] as $item) {
+    $secBoosterReuse = $findSection('Booster Reuse');
+    if ($secBoosterReuse !== null) {
+        foreach ($secBoosterReuse as $item) {
             $name = strtolower($item['name']);
             $val = $item['value'];
             if (strpos($name, 'most flights') !== false) {
@@ -322,8 +338,9 @@ function parseSpaceXStatsHtml(string $html): array
     }
 
     // 7. Capsule reuse
-    if (isset($rawSections['Capsule Reuse'])) {
-        foreach ($rawSections['Capsule Reuse'] as $item) {
+    $secCapsuleReuse = $findSection('Capsule Reuse');
+    if ($secCapsuleReuse !== null) {
+        foreach ($secCapsuleReuse as $item) {
             $name = strtolower($item['name']);
             $val = $item['value'];
             if (strpos($name, 'landed') !== false) {
@@ -335,8 +352,9 @@ function parseSpaceXStatsHtml(string $html): array
     }
 
     // 8. Dragon
-    if (isset($rawSections['Dragon'])) {
-        foreach ($rawSections['Dragon'] as $item) {
+    $secDragon = $findSection('Dragon');
+    if ($secDragon !== null) {
+        foreach ($secDragon as $item) {
             $name = strtolower($item['name']);
             $val = $item['value'];
             if (strpos($name, 'missions') !== false) {
@@ -354,8 +372,9 @@ function parseSpaceXStatsHtml(string $html): array
     }
 
     // 9. Payloads
-    if (isset($rawSections['Payloads'])) {
-        foreach ($rawSections['Payloads'] as $item) {
+    $secPayloads = $findSection('Payloads');
+    if ($secPayloads !== null) {
+        foreach ($secPayloads as $item) {
             $val = $item['value'];
             if (stripos($val, 'will be done soon') !== false) continue;
             $name = strtolower($item['name']);
@@ -372,8 +391,9 @@ function parseSpaceXStatsHtml(string $html): array
     }
 
     // 10. Mars
-    if (isset($rawSections['Mars'])) {
-        foreach ($rawSections['Mars'] as $item) {
+    $secMars = $findSection('Mars');
+    if ($secMars !== null) {
+        foreach ($secMars as $item) {
             $name = strtolower($item['name']);
             $val = $item['value'];
             if (strpos($name, 'landings') !== false) {
@@ -387,8 +407,9 @@ function parseSpaceXStatsHtml(string $html): array
     }
 
     // 11. Moon
-    if (isset($rawSections['Moon'])) {
-        foreach ($rawSections['Moon'] as $item) {
+    $secMoon = $findSection('Moon');
+    if ($secMoon !== null) {
+        foreach ($secMoon as $item) {
             $name = strtolower($item['name']);
             $val = $item['value'];
             if (strpos($name, 'landings') !== false) {
