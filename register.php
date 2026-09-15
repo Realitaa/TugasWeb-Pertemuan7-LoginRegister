@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 require __DIR__ . '/vendor/autoload.php';
 
+use Realitaa\PhpVite\Auth\AuthService;
+
 $dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
 $dotenv->safeLoad();
 
-// Start session
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+$auth = new AuthService();
+$auth->initSession();
+$auth->requireGuest('dashboard.php');
 
 require_once __DIR__ . '/src/components/ui/Input.php';
 require_once __DIR__ . '/src/components/ui/Button.php';
@@ -18,24 +19,7 @@ require_once __DIR__ . '/src/components/ThemeSwitch.php';
 require_once __DIR__ . '/src/components/AuthImage.php';
 
 $appName = $_ENV['VITE_APP_NAME'] ?? $_ENV['APP_NAME'] ?? 'SpaceXStat';
-$usersFile = __DIR__ . '/data/users.json';
-
-if (!file_exists($usersFile)) {
-    if (!is_dir(dirname($usersFile))) {
-        mkdir(dirname($usersFile), 0755, true);
-    }
-    file_put_contents($usersFile, json_encode([], JSON_PRETTY_PRINT));
-}
-
-// If already logged in and dashboard exists, redirect
-$hasDashboard = file_exists(__DIR__ . '/dashboard.php');
-if (!empty($_SESSION['user']) && $hasDashboard) {
-    header('Location: dashboard.php');
-    exit;
-}
-
-$toast = $_SESSION['flash_toast'] ?? null;
-unset($_SESSION['flash_toast']);
+$toast = $auth->getFlashToast();
 
 $errors = [];
 $old = [
@@ -43,78 +27,35 @@ $old = [
     'email' => '',
 ];
 
-// Handle Registration Submission (In-file Backend Logic)
+// Handle Registration Submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'register') {
-    $name = trim((string)($_POST['name'] ?? ''));
-    $email = strtolower(trim((string)($_POST['email'] ?? '')));
+    $name = (string)($_POST['name'] ?? '');
+    $email = (string)($_POST['email'] ?? '');
     $password = (string)($_POST['password'] ?? '');
     $passwordConfirmation = (string)($_POST['password_confirmation'] ?? '');
 
-    $old['name'] = $name;
-    $old['email'] = $email;
+    $old['name'] = trim($name);
+    $old['email'] = strtolower(trim($email));
 
-    if (empty($name)) {
-        $errors['name'] = 'Full name is required.';
-    } elseif (mb_strlen($name) < 2) {
-        $errors['name'] = 'Full name must be at least 2 characters.';
-    }
+    $result = $auth->register($name, $email, $password, $passwordConfirmation);
 
-    if (empty($email)) {
-        $errors['email'] = 'Email address is required.';
-    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $errors['email'] = 'Please provide a valid email address.';
-    }
-
-    if (empty($password)) {
-        $errors['password'] = 'Password is required.';
-    } elseif (strlen($password) < 6) {
-        $errors['password'] = 'Password must be at least 6 characters.';
-    }
-
-    if ($password !== $passwordConfirmation) {
-        $errors['password_confirmation'] = 'Passwords do not match.';
-    }
-
-    $users = json_decode((string)file_get_contents($usersFile), true) ?: [];
-
-    // Check duplicate email
-    if (empty($errors['email'])) {
-        foreach ($users as $u) {
-            if (strtolower($u['email'] ?? '') === $email) {
-                $errors['email'] = 'An account with this email address already exists.';
-                break;
-            }
-        }
-    }
-
-    if (empty($errors)) {
-        $newUser = [
-            'id' => 'usr_' . bin2hex(random_bytes(8)),
-            'name' => $name,
-            'email' => $email,
-            'password' => password_hash($password, PASSWORD_DEFAULT),
-            'created_at' => date('c'),
-            'remember_token' => null,
-        ];
-
-        $users[] = $newUser;
-        file_put_contents($usersFile, json_encode($users, JSON_PRETTY_PRINT));
-
-        $_SESSION['flash_toast'] = [
-            'type' => 'success',
-            'title' => 'Account Created!',
-            'message' => 'Registration complete. You can now sign in with your credentials.',
-        ];
+    if ($result['success']) {
+        $auth->setFlashToast(
+            'success',
+            'Account Created!',
+            'Registration complete. You can now sign in with your credentials.'
+        );
 
         header('Location: index.php');
         exit;
-    } else {
-        $toast = [
-            'type' => 'error',
-            'title' => 'Registration Failed',
-            'message' => reset($errors) ?: 'Please resolve the highlighted errors.',
-        ];
     }
+
+    $errors = $result['errors'];
+    $toast = [
+        'type' => 'error',
+        'title' => 'Registration Failed',
+        'message' => reset($errors) ?: 'Please resolve the highlighted errors.',
+    ];
 }
 ?>
 <!doctype html>

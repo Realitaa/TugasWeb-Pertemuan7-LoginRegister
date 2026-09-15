@@ -4,509 +4,49 @@ declare(strict_types=1);
 
 require __DIR__ . '/vendor/autoload.php';
 
+use Realitaa\PhpVite\Auth\AuthService;
+use Realitaa\PhpVite\SpaceX\SpaceXService;
+
 $dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
 $dotenv->safeLoad();
 
-// 1. Session Initialization
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+$auth = new AuthService();
+$user = $auth->requireAuth('index.php');
 
-$usersFile = __DIR__ . '/data/users.json';
-if (!file_exists($usersFile)) {
-    if (!is_dir(dirname($usersFile))) {
-        mkdir(dirname($usersFile), 0755, true);
-    }
-    file_put_contents($usersFile, json_encode([], JSON_PRETTY_PRINT));
-}
-
-// 2. Cookie Remember-Me Auth Check
-if (empty($_SESSION['user']) && !empty($_COOKIE['spacex_remember'])) {
-    $token = (string)$_COOKIE['spacex_remember'];
-    $users = json_decode((string)file_get_contents($usersFile), true) ?: [];
-    foreach ($users as $u) {
-        if (!empty($u['remember_token']) && hash_equals($u['remember_token'], $token)) {
-            $_SESSION['user'] = [
-                'id' => $u['id'],
-                'name' => $u['name'],
-                'email' => $u['email'],
-            ];
-            break;
-        }
-    }
-}
-
-// 3. Protected Page Guard: Redirect unauthenticated users to login
-if (empty($_SESSION['user'])) {
-    $_SESSION['flash_toast'] = [
-        'type' => 'warning',
-        'title' => 'Authentication Required',
-        'message' => 'Silakan masuk terlebih dahulu untuk mengakses telemetry dashboard.',
-    ];
-    header('Location: index.php');
-    exit;
-}
-
-$user = $_SESSION['user'];
 $userName = $user['name'] ?? $user['username'] ?? 'Commander';
 $userEmail = $user['email'] ?? '';
+$gravatarUrl = $auth->gravatar($userEmail);
 
-// 4. In-File Settings POST Handler (Profile Updating: name, email, password)
+// Handle Profile Update
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_profile') {
-    $newName = trim((string)($_POST['name'] ?? ''));
-    $newEmail = strtolower(trim((string)($_POST['email'] ?? '')));
+    $newName = (string)($_POST['name'] ?? '');
+    $newEmail = (string)($_POST['email'] ?? '');
     $newPassword = (string)($_POST['password'] ?? '');
 
-    $users = json_decode((string)file_get_contents($usersFile), true) ?: [];
-    $currentUserIndex = null;
-    foreach ($users as $idx => $u) {
-        if ((!empty($user['id']) && ($u['id'] ?? '') === $user['id']) || strtolower($u['email'] ?? '') === strtolower($userEmail)) {
-            $currentUserIndex = $idx;
-            break;
-        }
-    }
+    $userId = (string)($user['id'] ?? $userEmail);
+    $result = $auth->updateProfile($userId, $newName, $newEmail, $newPassword);
 
-    $errors = [];
-    if ($newName === '') {
-        $errors[] = 'Nama tampilan tidak boleh kosong.';
-    }
-
-    if ($newEmail === '') {
-        $errors[] = 'Alamat email tidak boleh kosong.';
-    } elseif (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
-        $errors[] = 'Format email tidak valid.';
+    if ($result['success']) {
+        $auth->setFlashToast('success', 'Pengaturan Tersimpan', 'Data profil berhasil diperbarui.');
     } else {
-        // Check duplicate email if changed
-        foreach ($users as $idx => $u) {
-            if ($idx !== $currentUserIndex && strtolower($u['email'] ?? '') === $newEmail) {
-                $errors[] = 'Email ini sudah digunakan oleh akun lain.';
-                break;
-            }
-        }
-    }
-
-    if ($newPassword !== '' && strlen($newPassword) < 6) {
-        $errors[] = 'Password minimal harus 6 karakter.';
-    }
-
-    if (!empty($errors)) {
-        $_SESSION['flash_toast'] = [
-            'type' => 'error',
-            'title' => 'Gagal Memperbarui Profil',
-            'message' => reset($errors),
-        ];
-    } elseif ($currentUserIndex !== null) {
-        $users[$currentUserIndex]['name'] = $newName;
-        $users[$currentUserIndex]['email'] = $newEmail;
-        if ($newPassword !== '') {
-            $users[$currentUserIndex]['password'] = password_hash($newPassword, PASSWORD_DEFAULT);
-        }
-
-        file_put_contents($usersFile, json_encode($users, JSON_PRETTY_PRINT));
-
-        $_SESSION['user']['name'] = $newName;
-        $_SESSION['user']['username'] = $newName;
-        $_SESSION['user']['email'] = $newEmail;
-
-        $_SESSION['flash_toast'] = [
-            'type' => 'success',
-            'title' => 'Pengaturan Tersimpan',
-            'message' => 'Data profil berhasil diperbarui.',
-        ];
+        $auth->setFlashToast(
+            'error',
+            'Gagal Memperbarui Profil',
+            reset($result['errors']) ?: 'Gagal memperbarui data profil.'
+        );
     }
 
     header('Location: dashboard.php');
     exit;
 }
 
-// Flash Toast Message
-$toast = $_SESSION['flash_toast'] ?? null;
-unset($_SESSION['flash_toast']);
-
-// 5. Gravatar Avatar URL
-$cleanEmail = strtolower(trim($userEmail));
-$gravatarHash = md5($cleanEmail);
-$gravatarUrl = "https://www.gravatar.com/avatar/{$gravatarHash}?s=96&d=404";
-
-// 6. In-File SpaceX Data Scraper & 1-Hour Caching Logic
-function parseSpaceXRatio(string $str): array
-{
-    $pattern = '/([0-9,]+)\s*\/\s*([0-9,]+)(?:\s*\(([\d\.]+)\%\))?/';
-    if (preg_match($pattern, $str, $matches)) {
-        return [
-            'success' => str_replace(',', '', $matches[1]),
-            'total' => str_replace(',', '', $matches[2]),
-            'rate' => isset($matches[3]) ? $matches[3] . '%' : '—',
-        ];
-    }
-    return ['success' => '—', 'total' => '—', 'rate' => '—'];
-}
-
-function defaultSpaceXStats(): array
-{
-    return [
-        'launch_count' => [
-            'total_launches' => '—',
-            'successful_launches' => '—',
-            'success_rate' => '—',
-            'failed_launches' => '—',
-            'most_successive' => '—',
-            'successive' => '—',
-            'vehicles' => [],
-        ],
-        'launches_per_year' => ['most_in_year' => '—', 'goals' => [], 'by_year' => []],
-        'launch_sites' => [],
-        'landing_sites' => [],
-        'turnarounds' => ['fastest' => ['value' => '—', 'details' => ''], 'fastest_booster' => ['value' => '—', 'details' => ''], 'sites' => []],
-        'booster_reuse' => ['most_flights' => '—', 'landed' => '—', 'reflown' => '—', 'block_5_landed' => '—', 'block_5_reflown' => '—'],
-        'capsule_reuse' => ['landed' => '—', 'reflown' => '—'],
-        'dragon' => ['missions' => '—', 'iss_cargo' => '—', 'reflights' => '—', 'crew_in_orbit' => '—', 'crew_flown_total' => '—'],
-        'payloads' => ['heaviest_leo' => ['value' => '—', 'extra' => ''], 'heaviest_gto' => ['value' => '—', 'extra' => ''], 'starlinks_in_orbit' => ['value' => '—', 'extra' => ''], 'teslas_in_space' => ['value' => '—', 'extra' => '']],
-        'mars' => ['landings' => '—', 'cargo' => '—', 'population' => '—'],
-        'moon' => ['landings' => '—', 'population' => '—'],
-        'last_updated' => null,
-    ];
-}
-
-function parseSpaceXStatsHtml(string $html): array
-{
-    if (trim($html) === '') {
-        return defaultSpaceXStats();
-    }
-
-    libxml_use_internal_errors(true);
-    $dom = new DOMDocument();
-    $dom->loadHTML($html, LIBXML_NOERROR | LIBXML_NOWARNING);
-    libxml_clear_errors();
-
-    $xpath = new DOMXPath($dom);
-    $contentBoxes = $xpath->query('//div[contains(@class, "content-box")]');
-
-    $rawSections = [];
-    foreach ($contentBoxes as $box) {
-        $h3 = $xpath->query('.//h3', $box)->item(0);
-        if (!$h3) continue;
-        $title = trim($h3->textContent);
-        $rows = $xpath->query('.//table/tbody/tr', $box);
-        $items = [];
-        foreach ($rows as $row) {
-            $cols = $xpath->query('./td', $row);
-            if ($cols->length >= 2) {
-                $items[] = [
-                    'name' => trim($cols->item(0)->textContent),
-                    'value' => trim($cols->item(1)->textContent),
-                    'extra' => $cols->length >= 3 ? trim($cols->item(2)->textContent) : '',
-                ];
-            }
-        }
-        $rawSections[$title] = $items;
-    }
-
-    $stats = defaultSpaceXStats();
-
-    // Helper to find section case-insensitively
-    $findSection = function(string $name) use ($rawSections): ?array {
-        foreach ($rawSections as $key => $items) {
-            if (strcasecmp((string)$key, $name) === 0) {
-                return $items;
-            }
-        }
-        return null;
-    };
-
-    // 1. Launch Count
-    $secLaunchCount = $findSection('Launch Count');
-    if ($secLaunchCount !== null) {
-        foreach ($secLaunchCount as $item) {
-            $name = $item['name'];
-            $val = $item['value'];
-            if (strcasecmp($name, 'Total') === 0) {
-                $p = parseSpaceXRatio($val);
-                $stats['launch_count']['total_launches'] = $p['total'];
-                $stats['launch_count']['successful_launches'] = $p['success'];
-                $stats['launch_count']['success_rate'] = $p['rate'];
-                if (is_numeric($p['total']) && is_numeric($p['success'])) {
-                    $stats['launch_count']['failed_launches'] = (string)((int)$p['total'] - (int)$p['success']);
-                }
-            } elseif (stripos($name, 'Most successive') !== false) {
-                $stats['launch_count']['most_successive'] = $val;
-            } elseif (stripos($name, 'Successive') !== false) {
-                $stats['launch_count']['successive'] = $val;
-            } else {
-                $p = parseSpaceXRatio($val);
-                $stats['launch_count']['vehicles'][] = [
-                    'name' => $name,
-                    'success' => (int)($p['success'] !== '—' ? $p['success'] : 0),
-                    'total' => (int)($p['total'] !== '—' ? $p['total'] : 0),
-                    'rate' => $p['rate'],
-                    'raw' => $val,
-                ];
-            }
-        }
-    }
-
-    // 2. Launches per year
-    $secLaunchesPerYear = $findSection('Launches Per Year');
-    if ($secLaunchesPerYear !== null) {
-        foreach ($secLaunchesPerYear as $item) {
-            $name = $item['name'];
-            $val = $item['value'];
-            if (stripos($name, 'Most') !== false) {
-                $stats['launches_per_year']['most_in_year'] = $val;
-            } elseif (stripos($name, 'goal') !== false) {
-                $stats['launches_per_year']['goals'][] = ['name' => $name, 'value' => $val];
-            } elseif (preg_match('/^\d{4}$/', $name)) {
-                $p = parseSpaceXRatio($val);
-                $stats['launches_per_year']['by_year'][] = [
-                    'year' => $name,
-                    'success' => (int)($p['success'] !== '—' ? $p['success'] : 0),
-                    'total' => (int)($p['total'] !== '—' ? $p['total'] : 0),
-                    'rate' => $p['rate'],
-                ];
-            }
-        }
-        // Urutkan tahun menaik (chronological ascending: e.g. 2010 -> 2026)
-        usort($stats['launches_per_year']['by_year'], function ($a, $b) {
-            return (int)$a['year'] <=> (int)$b['year'];
-        });
-    }
-
-    // 3. Launch sites
-    $secLaunchSites = $findSection('Launch Sites');
-    if ($secLaunchSites !== null) {
-        foreach ($secLaunchSites as $item) {
-            $p = parseSpaceXRatio($item['value']);
-            $stats['launch_sites'][] = [
-                'name' => $item['name'],
-                'success' => (int)($p['success'] !== '—' ? $p['success'] : 0),
-                'total' => (int)($p['total'] !== '—' ? $p['total'] : 0),
-                'rate' => $p['rate'],
-                'raw' => $item['value'],
-            ];
-        }
-    }
-
-    // 4. Landing sites
-    $secLandingSites = $findSection('Landing Sites');
-    if ($secLandingSites !== null) {
-        foreach ($secLandingSites as $item) {
-            $p = parseSpaceXRatio($item['value']);
-            $stats['landing_sites'][] = [
-                'name' => $item['name'],
-                'success' => (int)($p['success'] !== '—' ? $p['success'] : 0),
-                'total' => (int)($p['total'] !== '—' ? $p['total'] : 0),
-                'rate' => $p['rate'],
-                'extra' => $item['extra'] ?? '',
-                'raw' => $item['value'],
-            ];
-        }
-    }
-
-    // 5. Turnarounds
-    $secTurnarounds = $findSection('Turnarounds');
-    if ($secTurnarounds !== null) {
-        foreach ($secTurnarounds as $item) {
-            $name = strtolower($item['name']);
-            if (strpos($name, 'fastest booster') !== false) {
-                $stats['turnarounds']['fastest_booster'] = ['value' => $item['value'], 'details' => $item['extra'] ?? ''];
-            } elseif (strpos($name, 'fastest') !== false) {
-                $stats['turnarounds']['fastest'] = ['value' => $item['value'], 'details' => $item['extra'] ?? ''];
-            } else {
-                $stats['turnarounds']['sites'][] = [
-                    'site' => $item['name'],
-                    'time' => $item['value'],
-                    'details' => $item['extra'] ?? '',
-                ];
-            }
-        }
-    }
-
-    // 6. Booster reuse
-    $secBoosterReuse = $findSection('Booster Reuse');
-    if ($secBoosterReuse !== null) {
-        foreach ($secBoosterReuse as $item) {
-            $name = strtolower($item['name']);
-            $val = $item['value'];
-            if (strpos($name, 'most flights') !== false) {
-                $stats['booster_reuse']['most_flights'] = $val;
-            } elseif (strpos($name, 'block 5 landed') !== false) {
-                $stats['booster_reuse']['block_5_landed'] = $val;
-            } elseif (strpos($name, 'block 5 reflown') !== false) {
-                $stats['booster_reuse']['block_5_reflown'] = $val;
-            } elseif (strpos($name, 'landed') !== false) {
-                $stats['booster_reuse']['landed'] = $val;
-            } elseif (strpos($name, 'reflown') !== false) {
-                $stats['booster_reuse']['reflown'] = $val;
-            }
-        }
-    }
-
-    // 7. Capsule reuse
-    $secCapsuleReuse = $findSection('Capsule Reuse');
-    if ($secCapsuleReuse !== null) {
-        foreach ($secCapsuleReuse as $item) {
-            $name = strtolower($item['name']);
-            $val = $item['value'];
-            if (strpos($name, 'landed') !== false) {
-                $stats['capsule_reuse']['landed'] = $val;
-            } elseif (strpos($name, 'reflown') !== false) {
-                $stats['capsule_reuse']['reflown'] = $val;
-            }
-        }
-    }
-
-    // 8. Dragon
-    $secDragon = $findSection('Dragon');
-    if ($secDragon !== null) {
-        foreach ($secDragon as $item) {
-            $name = strtolower($item['name']);
-            $val = $item['value'];
-            if (strpos($name, 'missions') !== false) {
-                $stats['dragon']['missions'] = $val;
-            } elseif (strpos($name, 'iss cargo') !== false) {
-                $stats['dragon']['iss_cargo'] = $val;
-            } elseif (strpos($name, 'reflights') !== false) {
-                $stats['dragon']['reflights'] = $val;
-            } elseif (strpos($name, 'crew in orbit') !== false) {
-                $stats['dragon']['crew_in_orbit'] = $val;
-            } elseif (strpos($name, 'crew flown') !== false) {
-                $stats['dragon']['crew_flown_total'] = $val;
-            }
-        }
-    }
-
-    // 9. Payloads
-    $secPayloads = $findSection('Payloads');
-    if ($secPayloads !== null) {
-        foreach ($secPayloads as $item) {
-            $val = $item['value'];
-            if (stripos($val, 'will be done soon') !== false) continue;
-            $name = strtolower($item['name']);
-            if (strpos($name, 'heaviest leo') !== false) {
-                $stats['payloads']['heaviest_leo'] = ['value' => $val, 'extra' => $item['extra'] ?? ''];
-            } elseif (strpos($name, 'heaviest gto') !== false) {
-                $stats['payloads']['heaviest_gto'] = ['value' => $val, 'extra' => $item['extra'] ?? ''];
-            } elseif (strpos($name, 'starlinks in orbit') !== false) {
-                $stats['payloads']['starlinks_in_orbit'] = ['value' => $val, 'extra' => $item['extra'] ?? ''];
-            } elseif (strpos($name, 'tesla') !== false) {
-                $stats['payloads']['teslas_in_space'] = ['value' => preg_replace('/^Oh,\s*just\s*/i', '', $val), 'extra' => $item['extra'] ?? ''];
-            }
-        }
-    }
-
-    // 10. Mars
-    $secMars = $findSection('Mars');
-    if ($secMars !== null) {
-        foreach ($secMars as $item) {
-            $name = strtolower($item['name']);
-            $val = $item['value'];
-            if (strpos($name, 'landings') !== false) {
-                $stats['mars']['landings'] = $val;
-            } elseif (strpos($name, 'cargo') !== false) {
-                $stats['mars']['cargo'] = $val;
-            } elseif (strpos($name, 'population') !== false) {
-                $stats['mars']['population'] = $val;
-            }
-        }
-    }
-
-    // 11. Moon
-    $secMoon = $findSection('Moon');
-    if ($secMoon !== null) {
-        foreach ($secMoon as $item) {
-            $name = strtolower($item['name']);
-            $val = $item['value'];
-            if (strpos($name, 'landings') !== false) {
-                $stats['moon']['landings'] = $val;
-            } elseif (strpos($name, 'population') !== false) {
-                $stats['moon']['population'] = $val;
-            }
-        }
-    }
-
-    $stats['last_updated'] = date('Y-m-d H:i:s');
-    return $stats;
-}
-
-function fetchSpaceXStats(bool $forceRefresh = false): array
-{
-    $cacheFile = __DIR__ . '/storage/cache/spacex_stats.json';
-    $cacheDir = dirname($cacheFile);
-    $cacheTtl = 3600; // 1 hour
-
-    if (!$forceRefresh && file_exists($cacheFile)) {
-        $mtime = filemtime($cacheFile);
-        if ($mtime && (time() - $mtime < $cacheTtl)) {
-            $content = @file_get_contents($cacheFile);
-            if ($content) {
-                $json = json_decode($content, true);
-                if (is_array($json) && !empty($json['launch_count'])) {
-                    return $json;
-                }
-            }
-        }
-    }
-
-    // Fetch fresh HTML
-    $url = 'https://spacexnow.com/stats';
-    $html = '';
-    if (function_exists('curl_init')) {
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 3,
-            CURLOPT_TIMEOUT => 8,
-            CURLOPT_CONNECTTIMEOUT => 4,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        ]);
-        $res = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        unset($ch);
-        if ($httpCode >= 200 && $httpCode < 300 && is_string($res)) {
-            $html = $res;
-        }
-    } else {
-        $context = stream_context_create([
-            'http' => [
-                'timeout' => 8,
-                'user_agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            ],
-        ]);
-        $html = (string)@file_get_contents($url, false, $context);
-    }
-
-    if (!empty($html)) {
-        $parsed = parseSpaceXStatsHtml($html);
-        if (!empty($parsed['launch_count']['total_launches']) && $parsed['launch_count']['total_launches'] !== '—') {
-            if (!is_dir($cacheDir)) {
-                @mkdir($cacheDir, 0755, true);
-            }
-            @file_put_contents($cacheFile, json_encode($parsed, JSON_PRETTY_PRINT));
-            return $parsed;
-        }
-    }
-
-    // Fallback to expired cache
-    if (file_exists($cacheFile)) {
-        $content = @file_get_contents($cacheFile);
-        if ($content) {
-            $json = json_decode($content, true);
-            if (is_array($json) && !empty($json['launch_count'])) {
-                return $json;
-            }
-        }
-    }
-
-    return defaultSpaceXStats();
-}
+$toast = $auth->getFlashToast();
 
 require_once __DIR__ . '/src/components/ThemeSwitch.php';
 
+$spaceXService = new SpaceXService();
 $forceRefresh = isset($_GET['refresh']);
-$stats = fetchSpaceXStats($forceRefresh);
+$stats = $spaceXService->getStats($forceRefresh);
 if (!empty($stats['launches_per_year']['by_year'])) {
     usort($stats['launches_per_year']['by_year'], function ($a, $b) {
         return (int)$a['year'] <=> (int)$b['year'];
@@ -732,7 +272,7 @@ foreach ($landingSites as $ls) {
     <!-- SETTINGS MODAL ("PENGATURAN") -->
     <div 
       id="settings-modal" 
-      class="hs-overlay hidden size-full fixed top-0 start-0 z-80 overflow-x-hidden overflow-y-auto pointer-events-none" 
+      class="hs-overlay hidden size-full fixed top-0 inset-s-0 z-80 overflow-x-hidden overflow-y-auto pointer-events-none" 
       role="dialog" 
       tabindex="-1" 
       aria-labelledby="settings-modal-label"

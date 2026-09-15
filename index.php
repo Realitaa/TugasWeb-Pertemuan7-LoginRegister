@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 require __DIR__ . '/vendor/autoload.php';
 
+use Realitaa\PhpVite\Auth\AuthService;
+
 $dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
 $dotenv->safeLoad();
 
-// Start session
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+$auth = new AuthService();
+$auth->initSession();
+$auth->requireGuest('dashboard.php');
 
 require_once __DIR__ . '/src/components/ui/Input.php';
 require_once __DIR__ . '/src/components/ui/Button.php';
@@ -18,116 +19,41 @@ require_once __DIR__ . '/src/components/ThemeSwitch.php';
 require_once __DIR__ . '/src/components/AuthImage.php';
 
 $appName = $_ENV['VITE_APP_NAME'] ?? $_ENV['APP_NAME'] ?? 'SpaceXStat';
-$usersFile = __DIR__ . '/data/users.json';
-
-if (!file_exists($usersFile)) {
-    if (!is_dir(dirname($usersFile))) {
-        mkdir(dirname($usersFile), 0755, true);
-    }
-    file_put_contents($usersFile, json_encode([], JSON_PRETTY_PRINT));
-}
-
-// In-file cookie remember-me check
-if (empty($_SESSION['user']) && !empty($_COOKIE['spacex_remember'])) {
-    $token = (string)$_COOKIE['spacex_remember'];
-    $users = json_decode((string)file_get_contents($usersFile), true) ?: [];
-    foreach ($users as $u) {
-        if (!empty($u['remember_token']) && hash_equals($u['remember_token'], $token)) {
-            $_SESSION['user'] = [
-                'id' => $u['id'],
-                'name' => $u['name'],
-                'email' => $u['email'],
-            ];
-            break;
-        }
-    }
-}
-
-// If already logged in and dashboard exists, redirect
-$hasDashboard = file_exists(__DIR__ . '/dashboard.php');
-if (!empty($_SESSION['user']) && $hasDashboard) {
-    header('Location: dashboard.php');
-    exit;
-}
-
-$currentUser = $_SESSION['user'] ?? null;
-$toast = $_SESSION['flash_toast'] ?? null;
-unset($_SESSION['flash_toast']);
+$currentUser = $auth->user();
+$toast = $auth->getFlashToast();
 
 $errors = [];
 $oldEmail = '';
 
-// Handle Login Submission (In-file Backend Logic)
+// Handle Login Submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'login') {
     $email = strtolower(trim((string)($_POST['email'] ?? '')));
     $password = (string)($_POST['password'] ?? '');
     $remember = !empty($_POST['remember']);
     $oldEmail = $email;
 
-    if (empty($email)) {
-        $errors['email'] = 'Email address is required.';
-    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $errors['email'] = 'Please enter a valid email address.';
+    $result = $auth->login($email, $password, $remember);
+
+    if ($result['success']) {
+        $userName = (string)($result['user']['name'] ?? 'User');
+        $auth->setFlashToast(
+            'success',
+            'Welcome Back!',
+            'Signed in successfully as ' . htmlspecialchars($userName, ENT_QUOTES, 'UTF-8')
+        );
+
+        $hasDashboard = file_exists(__DIR__ . '/dashboard.php');
+        header('Location: ' . ($hasDashboard ? 'dashboard.php' : 'index.php'));
+        exit;
     }
 
-    if (empty($password)) {
-        $errors['password'] = 'Password is required.';
-    }
-
-    if (empty($errors)) {
-        $users = json_decode((string)file_get_contents($usersFile), true) ?: [];
-        $matchedUser = null;
-        $matchedIndex = null;
-
-        foreach ($users as $idx => $u) {
-            if (strtolower($u['email']) === $email) {
-                $matchedUser = $u;
-                $matchedIndex = $idx;
-                break;
-            }
-        }
-
-        if ($matchedUser && password_verify($password, $matchedUser['password'])) {
-            // Login Success
-            $_SESSION['user'] = [
-                'id' => $matchedUser['id'],
-                'name' => $matchedUser['name'],
-                'email' => $matchedUser['email'],
-            ];
-
-            if ($remember) {
-                $rememberToken = bin2hex(random_bytes(32));
-                $users[$matchedIndex]['remember_token'] = $rememberToken;
-                file_put_contents($usersFile, json_encode($users, JSON_PRETTY_PRINT));
-                setcookie('spacex_remember', $rememberToken, [
-                    'expires' => time() + (86400 * 30),
-                    'path' => '/',
-                    'httponly' => true,
-                    'samesite' => 'Lax',
-                ]);
-            }
-
-            $_SESSION['flash_toast'] = [
-                'type' => 'success',
-                'title' => 'Welcome Back!',
-                'message' => 'Signed in successfully as ' . htmlspecialchars($matchedUser['name'], ENT_QUOTES, 'UTF-8'),
-            ];
-
-            if ($hasDashboard) {
-                header('Location: dashboard.php');
-                exit;
-            } else {
-                header('Location: index.php');
-                exit;
-            }
-        } else {
-            $toast = [
-                'type' => 'error',
-                'title' => 'Authentication Failed',
-                'message' => 'Invalid email or password. Please check your credentials.',
-            ];
-            $errors['auth'] = 'Invalid email or password combination.';
-        }
+    $errors = $result['errors'];
+    if (isset($errors['auth'])) {
+        $toast = [
+            'type' => 'error',
+            'title' => 'Authentication Failed',
+            'message' => 'Invalid email or password. Please check your credentials.',
+        ];
     } else {
         $toast = [
             'type' => 'error',
