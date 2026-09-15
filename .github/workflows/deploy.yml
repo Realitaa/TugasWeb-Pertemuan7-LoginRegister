@@ -94,7 +94,7 @@ jobs:
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           FTP_URL: ${{ secrets.FTP_SERVER }}
         run: |
-          git ftp push --auto-init --force --verbose \
+          git ftp push --auto-init --verbose \
             --user "$FTP_USER" \
             --passwd "$FTP_PASSWORD" \
             "$FTP_URL"
