@@ -28,7 +28,7 @@ $old = [
 ];
 
 // Handle Registration Submission
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'register') {
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['action']) && $_POST['action'] === 'register') {
     $name = (string)($_POST['name'] ?? '');
     $email = (string)($_POST['email'] ?? '');
     $password = (string)($_POST['password'] ?? '');

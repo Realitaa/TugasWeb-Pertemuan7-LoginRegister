@@ -18,7 +18,7 @@ $userEmail = $user['email'] ?? '';
 $gravatarUrl = $auth->gravatar($userEmail);
 
 // Handle Profile Update
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_profile') {
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_profile') {
     $newName = (string)($_POST['name'] ?? '');
     $newEmail = (string)($_POST['email'] ?? '');
     $newPassword = (string)($_POST['password'] ?? '');

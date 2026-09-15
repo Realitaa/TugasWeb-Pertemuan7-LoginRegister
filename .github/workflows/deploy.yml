@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -54,7 +54,7 @@ jobs:
 
     steps:
       - name: Checkout repository with full history
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -94,7 +94,7 @@ jobs:
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           FTP_URL: ${{ secrets.FTP_SERVER }}
         run: |
-          git ftp push --auto-init --verbose \
+          git ftp push --auto-init --force --verbose \
             --user "$FTP_USER" \
             --passwd "$FTP_PASSWORD" \
             "$FTP_URL"
